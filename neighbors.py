@@ -17,6 +17,7 @@ import measurements_api
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
+
 @dataclass
 class Device:
     mac: str
@@ -36,8 +37,9 @@ def to_CIDR_notation(bytes_network, bytes_netmask) -> str:
     net = "%s/%s" % (network, netmask)
     if netmask < 16:
         return None
-
+    
     return net
+
 
 def resolve_hostname(ip: str) -> Optional[str]:
     try:
@@ -61,6 +63,7 @@ def find_neighbor_devices_in_net_from_interface(net, interface, timeout=5) -> li
         )
         return res
 
+
 def assert_root():
     if os.geteuid() != 0:
         print('You need to be root to run this script', file=sys.stderr)
@@ -70,27 +73,27 @@ def assert_root():
 def is_relevant_route(network, netmask, interface, address):
     if network == 0 or interface == 'lo' or address == '127.0.0.1' or address == '0.0.0.0':
         return False
-
+    
     if netmask <= 0 or netmask == 0xFFFFFFFF:
         return False
-
-    if interface.startswith('docker') or interface.startswith('br-')  or interface.startswith('tun'):
+    
+    if interface.startswith('docker') or interface.startswith('br-') or interface.startswith('tun'):
         return False
-
+    
     return True
 
 
-def load_blacklist():
+def load_blacklist() -> set[str]:
     with open('blacklist') as f:
-        return set([l.strip() for l in f])
+        return set([line.strip() for line in f])
 
 
-def load_whitelist():
-    return []
-    res = set()
+def load_whitelist() -> list[set[str]]:
+    res = []
     with open('whitelist') as f:
         for row in f:
-            res = res.union(set(row.split(',')))
+            res.append(set(row.strip().split(' ')))
+    return res
 
 
 def count_unique_new_devices(devices: list[Device], whitelist: list[set], blacklist: set[str]):
@@ -98,37 +101,42 @@ def count_unique_new_devices(devices: list[Device], whitelist: list[set], blackl
     seen = set()
     for device in devices:
         if device.mac in blacklist:
-            print(device.mac + 'blacklisted')
+            logger.info(f'{device.mac} is blacklisted')
+            continue
+        if device.mac in seen:
+            logger.info(f'{device.mac} belongs to a whitelisted group')
             continue
         for group in whitelist:
             if device.mac in group:
-                seen = seen.union(group) 
+                seen = seen.union(group)
+        logger.info(f'{device.mac} is new')
         count += 1
     return count
 
 
 def count_unique_devices_in_network() -> int:
-
     whitelist = load_whitelist()
     blacklist = load_blacklist()
-
+    
     devices = []
     for network, netmask, _, interface, address, _ in scapy.config.conf.route.routes:
-
+        
         if not is_relevant_route(network, netmask, interface, address):
             continue
-
+        
         if not (net := to_CIDR_notation(network, netmask)):
             continue
-
+        
         devices += find_neighbor_devices_in_net_from_interface(net, interface)
     
     count = count_unique_new_devices(devices, whitelist, blacklist)
+    print(count)
     return count
-    
-    
+
+
 config = configparser.ConfigParser()
 config.read("config.ini")
+
 
 def main():
     api = measurements_api.MeasurementsAPI(
@@ -140,12 +148,10 @@ def main():
         m = measurements_api.Measurement(measurement_name='occupancy', value=count, tags={})
         print('Writing measurement')
         api.send_measurement(m)
-
+        
         time.sleep(int(config['MAIN']['INTERVAL']))
 
 
 if __name__ == "__main__":
-
     assert_root()
     main()
-
