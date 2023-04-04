@@ -61,7 +61,7 @@ def find_neighbor_devices_in_net_from_interface(net, interface, timeout=5) -> li
                 mac=mac, ip=ip, hostname=hostname,
             )
         )
-        return res
+    return res
 
 
 def assert_root():
